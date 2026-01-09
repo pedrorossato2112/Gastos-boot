@@ -1,17 +1,18 @@
 {
-  "name": "gastos-boot",
+  "name": "finance-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Bot financeiro para Discord",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Pedro Rossato",
+  "license": "ISC",
   "dependencies": {
     "discord.js": "^14.25.1",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "sqlite3": "^5.1.7",
+    "node-cron": "^3.0.3"
   }
 }
