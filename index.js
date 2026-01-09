@@ -1,28 +1,23 @@
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
 const cron = require("node-cron");
-const dotenv = require("dotenv");
+require("dotenv").config();
 
-dotenv.config();
-
-// Configurando bot
+// Configura cliente Discord
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
   ],
-  partials: [Partials.Channel]
+  partials: [Partials.Channel],
 });
 
-// Abrindo ou criando banco
-const db = new sqlite3.Database("./db.sqlite", (err) => {
-  if (err) return console.error(err.message);
-  console.log("Conectado ao banco db.sqlite");
-});
+// Cria ou abre banco de dados
+const db = new sqlite3.Database("./db.sqlite");
 
-// Criando tabela se não existir
+// Cria tabela se não existir
 db.run(`
   CREATE TABLE IF NOT EXISTS registros (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,24 +28,22 @@ db.run(`
   )
 `);
 
-// Canais mapeados
+// Função para data/hora local
+function dataAtualLocal() {
+  const agora = new Date();
+  return agora.toLocaleString("pt-BR", { hour12: false });
+}
+
+// Map de canais
 const canais = {
   "🎮gasto-pessoal": "gasto-pessoal",
   "🏦investimentos-empresa": "investimentos-empresa",
   "🏦investimentos-pessoal": "investimentos-pessoal",
-  "💸ganhos": "ganhos"
+  "💸ganhos": "ganhos",
 };
 
-// Função para pegar data/hora de Brasília
-function dataAtualLocal() {
-  return new Date().toLocaleString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour12: false
-  });
-}
-
-// Captura mensagens do usuário
-client.on("messageCreate", async (msg) => {
+// Captura mensagens para registrar
+client.on("messageCreate", (msg) => {
   if (msg.author.bot) return;
   if (msg.author.id !== process.env.USER_ID) return;
 
@@ -66,52 +59,64 @@ client.on("messageCreate", async (msg) => {
   db.run(
     `INSERT INTO registros (tipo, descricao, valor, data) VALUES (?, ?, ?, ?)`,
     [tipo, descricao, valor, dataAtualLocal()],
-    async (err) => {
-      if (err) {
-        console.error(err.message);
-        await msg.reply("❌ Ocorreu um erro ao registrar o gasto.");
-      } else {
-        console.log(`Registro inserido: ${tipo} | ${descricao} | R$${valor}`);
-        await msg.reply(`✅ Gasto registrado: **${descricao} – R$${valor}**`);
-      }
+    (err) => {
+      if (err) console.error("Erro ao registrar:", err);
+      else msg.reply(`✅ Registrado: ${descricao} - R$ ${valor.toFixed(2)}`);
     }
   );
 });
 
+// Cron semanal: todo sábado às 10h
+cron.schedule("0 10 * * 6", async () => {
+  db.all(
+    `SELECT tipo, SUM(valor) AS total
+     FROM registros
+     WHERE date(data) >= date('now','-7 days')
+     GROUP BY tipo`,
+    [],
+    async (err, rows) => {
+      if (err) {
+        console.error("Erro ao gerar relatório:", err);
+        return;
+      }
 
+      if (!rows || rows.length === 0) return;
 
-// Cron semanal sábado às 10h
-cron.schedule("* * * * *", async () => { // Mudar para "* * * * *" só pra teste
-  const agora = new Date();
-  const seteDiasAtras = new Date();
-  seteDiasAtras.setDate(agora.getDate() - 7);
+      let texto = "📊 **Relatório Semanal**\n\n";
+      rows.forEach((r) => {
+        let emoji = "";
+        switch (r.tipo) {
+          case "gasto-pessoal":
+            emoji = "🎮";
+            break;
+          case "ganhos":
+            emoji = "💸";
+            break;
+          case "investimentos-empresa":
+            emoji = "🏦 (Empresa)";
+            break;
+          case "investimentos-pessoal":
+            emoji = "🏦 (Pessoal)";
+            break;
+        }
+        texto += `${emoji} ${r.tipo.replace(/-/g, " ")}: **R$ ${r.total.toFixed(
+          2
+        )}**\n`;
+      });
 
-  for (const [nomeCanal, tipo] of Object.entries(canais)) {
-    db.all(
-      `SELECT valor FROM registros WHERE tipo = ? AND datetime(data) >= datetime(?)`,
-      [tipo, seteDiasAtras.toISOString()],
-      async (err, rows) => {
-        if (err) return console.error(err);
-        if (!rows?.length) return; // sem registros
-
-        const total = rows.reduce((s, r) => s + r.valor, 0).toFixed(2);
-
-        const texto = `📊 **Relatório semanal – ${tipo}**
-Total: **R$ ${total}**`;
-
-        // Envia para todos os guilds e canais corretos
-        client.guilds.cache.forEach(guild => {
-          const canal = guild.channels.cache.find(c => c.name === nomeCanal);
+      // Envia para os canais do Discord
+      client.guilds.cache.forEach((guild) => {
+        Object.keys(canais).forEach((nomeCanal) => {
+          const canal = guild.channels.cache.find((c) => c.name === nomeCanal);
           if (canal) canal.send(texto);
         });
+      });
 
-        // Envia no privado
-        const user = await client.users.fetch(process.env.USER_ID);
-        user.send(texto);
-      }
-    );
-  }
+      // Envia direto para você
+      const user = await client.users.fetch(process.env.USER_ID);
+      if (user) user.send(texto);
+    }
+  );
 });
-
 
 client.login(process.env.DISCORD_TOKEN);
